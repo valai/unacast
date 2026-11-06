@@ -11,6 +11,8 @@ declare global {
   namespace electron {
     let mainWindow: BrowserWindow;
     let chatWindow: BrowserWindow;
+    let subtitleWindow: BrowserWindow;
+    let desktopSubtitlePayload: { id: number; dom: string; durationMs: number; dispType: number } | null;
     let translateWindow: BrowserWindow;
     let imagePreviewWindow: BrowserWindow;
 
@@ -267,7 +269,7 @@ declare global {
     };
 
     /**
-     * チャットウィンドウに注入するユーザー CSS (設定画面の「チャットウィンドウのスタイル」で編集)。
+     * デスクトップ字幕に注入するユーザー CSS (設定画面の「デスクトップ字幕」で編集)。
      * resources/style-server.css より後に読み込むので、こちらが優先される。既定 ''
      */
     let chatWindowCss: string;

@@ -210,13 +210,13 @@ export const registerIpcSubscribers = () => {
   });
 };
 
-/** チャットウィンドウの表示モード (最前面・枠なし/背景透過・クリック透過) を取得する */
+/** デスクトップ字幕の表示モード (最前面・枠表示) を取得する */
 export const invokeGetChatWindowMode = (): Promise<ChatWindowMode> => ipcRenderer.invoke(electronEvent.GET_CHAT_WINDOW_MODE);
 
-/** チャットウィンドウの表示モードを変更する。変更後のモードが返る */
+/** デスクトップ字幕の表示モードを変更する。変更後のモードが返る */
 export const invokeSetChatWindowMode = (patch: Partial<ChatWindowMode>): Promise<ChatWindowMode> => ipcRenderer.invoke(electronEvent.SET_CHAT_WINDOW_MODE, patch);
 
-/** チャットウィンドウの表示モードの変更 (右クリックメニューからの変更を含む) を購読する。戻り値で購読を解除する */
+/** デスクトップ字幕の表示モードの変更を購読する。戻り値で購読を解除する */
 export const subscribeChatWindowMode = (listener: (mode: ChatWindowMode) => void) => {
   const handler = (_event: any, mode: ChatWindowMode) => listener(mode);
   ipcRenderer.on(electronEvent.CHAT_WINDOW_MODE_UPDATED, handler);
@@ -225,9 +225,24 @@ export const subscribeChatWindowMode = (listener: (mode: ChatWindowMode) => void
   };
 };
 
-/** チャットウィンドウのユーザー CSS を main 経由でチャットウィンドウへ反映する */
+/** デスクトップ字幕のユーザー CSS を main 経由で字幕ウィンドウへ反映する */
 export const sendChatWindowCss = (css: string) => {
   ipcRenderer.send(electronEvent.APPLY_CHAT_WINDOW_CSS, css);
+};
+
+/** 通常のチャットボックスを表示する */
+export const sendShowChatWindow = () => {
+  ipcRenderer.send(electronEvent.SHOW_CHAT_WINDOW);
+};
+
+/** デスクトップ字幕ウィンドウを表示する */
+export const sendShowDesktopSubtitle = () => {
+  ipcRenderer.send(electronEvent.SHOW_DESKTOP_SUBTITLE);
+};
+
+/** デスクトップ字幕ウィンドウを隠す */
+export const sendHideDesktopSubtitle = () => {
+  ipcRenderer.send(electronEvent.HIDE_DESKTOP_SUBTITLE);
 };
 
 export const sendApplyConfig = (config: AppConfig) => {

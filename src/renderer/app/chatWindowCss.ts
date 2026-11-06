@@ -92,54 +92,22 @@ export const buildCssValue = (def: CssPropertyDef, input: string): string | null
   }
 };
 
-/** プレビューに並べるサンプルコメント (チャットウィンドウと同じ DOM 構造。startServer.ts の createDom 参照) */
+/** デスクトップ字幕用のプレビューコメント (startServer.ts の createDom の本文部分と同じ DOM 構造) */
 const SAMPLE_COMMENTS_HTML = `
 <li class="list-item">
-  <span class="icon-block"><img class="icon" src="../../img/unacast.png"></span>
   <div class="content">
-    <span class="resNumber">123</span>
-    <span class="name">名無しさん</span>
-    <span class="date">2026/10/28(水) 12:34:56</span><br />
     <span class="res">
-      掲示板のレスのサンプルです。長い文章は横幅に合わせて折り返されます。<span class="url">https://example.com/</span>
+      掲示板のレスのサンプルです。長い文章は横幅に合わせて折り返されます。
     </span>
   </div>
 </li>
-<li class="list-item">
-  <span class="icon-block"><img class="icon" src="../../img/youtube.png"></span>
-  <div class="content">
-    <span class="name">YouTubeの視聴者</span><br />
-    <span class="res">
-      配信のコメントのサンプルです
-    </span>
-  </div>
-</li>
-<li class="list-item">
-  <span class="icon-block"><img class="icon" src="../../img/twitch.png"></span>
-  <div class="content">
-    <span class="ng-mark" title="NGワード">🚫</span>
-    <span class="name">Twitchの視聴者</span><br />
-    <span class="res">
-      NGワードに一致したコメントのサンプルです
-    </span>
-  </div>
-</li>
-<li class="list-item">
-  <span class="icon-block"><img class="icon" src="../../img/unacast.png"></span>
-  <div class="content">
-    <span class="resNumber">124</span>
-    <span class="name">名無しさん</span><br />
-    <span class="aares">
-      &nbsp;&nbsp;∧＿∧<br />（&#x3000;´∀｀）＜ AAのサンプル
-    </span>
-  </div>
-</li>`;
+`;
 
 /**
  * プレビュー用 iframe の srcdoc を作る。
- * CSS の読み込み順はチャットウィンドウ (src/html/chat.html) と同じにする:
+ * CSS の読み込み順はデスクトップ字幕 (src/html/desktopSubtitle.html) と同じにする:
  * 共用既定 → アプリ内ウィンドウ既定 → resources/style-server.css → 画面で入力中の CSS。
- * 相対パスを chat.html と同じ位置から解決させるため、設定画面 (index.html と同じ階層) の URL を base にする。
+ * 相対パスを desktopSubtitle.html と同じ位置から解決させるため、設定画面 (index.html と同じ階層) の URL を base にする。
  * 入力中の CSS は id="user-css" の style 要素に入れる (編集のたびに文書を作り直さず、ここだけ書き換えるため)。
  */
 export const buildPreviewDocument = (baseHref: string, userCss: string): string => {
@@ -153,7 +121,7 @@ export const buildPreviewDocument = (baseHref: string, userCss: string): string 
   <link rel="stylesheet" href="../../css/style-server.css" />
   <link rel="stylesheet" href="../../css/style-window.css" />
   <link rel="stylesheet" href="../../../../../style-server.css" />
-  <style>body { overflow-y: auto; }</style>
+  <style>html, body { overflow: hidden; background: transparent; margin: 0; } ul#res-list { margin: 0; padding: 0; list-style: none; }</style>
   <style id="user-css">${safeCss}</style>
 </head>
 <body>

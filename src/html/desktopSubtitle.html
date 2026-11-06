@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>unacast - desktop subtitle</title>
+    <link rel="stylesheet" href="/css/style-server.css" />
+    <link rel="stylesheet" href="/css/style-window.css" />
+    <link rel="stylesheet" href="../../../../../style-server.css" />
+    <script type="module" src="../renderer/desktopSubtitle.ts"></script>
+    <script>
+      const urlopen = (url) => {
+        const { shell } = require('electron');
+        let tmp = url;
+        if (url.match(/^ttp/)) tmp = `h${url}`;
+        shell.openExternal(tmp);
+      };
+      const imageopen = (url) => {
+        const { ipcRenderer } = require('electron');
+        ipcRenderer.send('PREVIEW_IMAGE', url);
+      };
+    </script>
+    <style>
+      html,
+      body {
+        width: 100%;
+        min-height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: transparent;
+      }
+      #parent {
+        min-height: 100%;
+        box-sizing: border-box;
+        /* 青い独立ハンドルと、本文の縁取りが接触しないよう余白を確保する */
+        padding-top: 8px;
+      }
+      ul#res-list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      li.list-item {
+        margin: 0;
+      }
+      #subtitle-frame {
+        position: fixed;
+        inset: 0;
+        z-index: 10000;
+        pointer-events: none;
+      }
+      #subtitle-frame.hidden {
+        display: none;
+      }
+      #subtitle-frame-outline {
+        position: absolute;
+        inset: 0;
+        border: 1px solid rgba(180, 185, 225, 0.72);
+        box-sizing: border-box;
+      }
+      .subtitle-resize-edge {
+        position: absolute;
+        z-index: 1;
+        pointer-events: auto;
+        touch-action: none;
+      }
+      .subtitle-resize-edge.top,
+      .subtitle-resize-edge.bottom {
+        left: 8px;
+        right: 8px;
+        height: 8px;
+        cursor: ns-resize;
+      }
+      .subtitle-resize-edge.left,
+      .subtitle-resize-edge.right {
+        top: 8px;
+        bottom: 8px;
+        width: 8px;
+        cursor: ew-resize;
+      }
+      .subtitle-resize-edge.top { top: 0; }
+      .subtitle-resize-edge.bottom { bottom: 0; }
+      .subtitle-resize-edge.left { left: 0; }
+      .subtitle-resize-edge.right { right: 0; }
+      .subtitle-resize-edge.top-left,
+      .subtitle-resize-edge.top-right,
+      .subtitle-resize-edge.bottom-left,
+      .subtitle-resize-edge.bottom-right {
+        width: 12px;
+        height: 12px;
+      }
+      .subtitle-resize-edge.top-left { top: 0; left: 0; cursor: nwse-resize; }
+      .subtitle-resize-edge.top-right { top: 0; right: 0; cursor: nesw-resize; }
+      .subtitle-resize-edge.bottom-left { bottom: 0; left: 0; cursor: nesw-resize; }
+      .subtitle-resize-edge.bottom-right { bottom: 0; right: 0; cursor: nwse-resize; }
+    </style>
+  </head>
+  <body>
+    <div id="parent"><ul id="res-list"></ul></div>
+    <div id="subtitle-frame" class="hidden" aria-hidden="true">
+      <div id="subtitle-frame-outline"></div>
+      <div class="subtitle-resize-edge top" data-resize-edge="top"></div>
+      <div class="subtitle-resize-edge bottom" data-resize-edge="bottom"></div>
+      <div class="subtitle-resize-edge left" data-resize-edge="left"></div>
+      <div class="subtitle-resize-edge right" data-resize-edge="right"></div>
+      <div class="subtitle-resize-edge top-left" data-resize-edge="top-left"></div>
+      <div class="subtitle-resize-edge top-right" data-resize-edge="top-right"></div>
+      <div class="subtitle-resize-edge bottom-left" data-resize-edge="bottom-left"></div>
+      <div class="subtitle-resize-edge bottom-right" data-resize-edge="bottom-right"></div>
+    </div>
+  </body>
+</html>

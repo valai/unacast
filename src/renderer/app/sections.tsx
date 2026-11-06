@@ -34,6 +34,6 @@ export const sections: SectionDef[] = [
   { id: 'sherpaStt', label: 'ローカル音声認識', icon: <MicIcon /> },
   { id: 'ngword', label: 'NGワード', icon: <BlockIcon /> },
   { id: 'other', label: 'その他', icon: <TuneIcon /> },
-  // 手元のチャットウィンドウにだけ効く設定。配信に関わる設定と分けるため区切って末尾に置く (全設定には含めない)
-  { id: 'chatWindowStyle', label: 'チャットウィンドウのスタイル', icon: <PaletteIcon />, dividerBefore: true },
+  // 手元のデスクトップ字幕にだけ効く設定。配信に関わる設定と分けるため区切って末尾に置く (全設定には含めない)
+  { id: 'chatWindowStyle', label: 'デスクトップ字幕', icon: <PaletteIcon />, dividerBefore: true },
 ];

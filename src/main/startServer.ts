@@ -167,6 +167,7 @@ ipcMain.on(electronEvent.APPLY_CONFIG, async (event: any, config: (typeof global
  */
 ipcMain.on(electronEvent.START_SERVER, async (event: any, config: (typeof globalThis)['config']) => {
   globalThis.electron.chatWindow.webContents.send(electronEvent.CLEAR_COMMENT);
+  clearDesktopSubtitle();
   globalThis.electron.translateWindow.webContents.send(electronEvent.CLEAR_COMMENT);
   globalThis.electron.threadNumber = 0;
   globalThis.electron.commentQueueList = [];
@@ -744,6 +745,7 @@ const startYoutubeChat = async () => {
  */
 ipcMain.on(electronEvent.STOP_SERVER, (event) => {
   log.debug('[startServer] server stop');
+  clearDesktopSubtitle();
   server.close();
   aWss.close();
   displayClients.clear();
@@ -1319,14 +1321,14 @@ const playSe = async () => {
 };
 ipcMain.on(electronEvent.PLAY_SOUND_END, () => (isPlayingSe = false));
 
-export const createDom = (message: UserComment, type: 'chat' | 'server', isAA?: boolean) => {
+export const createDom = (message: UserComment, type: 'chat' | 'server', isAA?: boolean, contentOnly = false) => {
   let domStr = `<li class="list-item">`;
 
   /** レス番とかの行が何かしら表示対象になっているか */
   let isResNameShowed = false;
 
   // アイコン表示
-  if (globalThis.config.showIcon) {
+  if (!contentOnly && globalThis.config.showIcon) {
     domStr += `
     <span class="icon-block">
       <img class="icon" src="${convertUrltoImgTagSrc(message.imgUrl)}">
@@ -1340,34 +1342,34 @@ export const createDom = (message: UserComment, type: 'chat' | 'server', isAA?: 
   // NG マーク (チャットウィンドウ・通常NGのみ表示。
   // 配信側と透明NGには元々 isNg が立ったメッセージが届かないルートなので、
   // ここに来る chat の isNg は通常NGに限られる)
-  if (type === 'chat' && message.isNg) {
+  if (!contentOnly && type === 'chat' && message.isNg) {
     domStr += `<span class="ng-mark" title="NGワード">🚫</span>`;
     isResNameShowed = true;
   }
 
   // レス番表示
-  if (globalThis.config.showNumber && message.number) {
+  if (!contentOnly && globalThis.config.showNumber && message.number) {
     domStr += `
       <span class="resNumber">${message.number}</span>
     `;
     isResNameShowed = true;
   }
   // 名前表示
-  if (globalThis.config.showName && message.name) {
+  if (!contentOnly && globalThis.config.showName && message.name) {
     domStr += `<span class="name">${message.name}</span>`;
     isResNameShowed = true;
   }
   // 時刻表示
-  if (globalThis.config.showTime && message.date) {
+  if (!contentOnly && globalThis.config.showTime && message.date) {
     domStr += `<span class="date">${message.date}</span>`;
     isResNameShowed = true;
   }
 
   // 名前と本文を改行で分ける
   // 名前や時刻の行が一つも無ければ、改行しない
-  if (globalThis.config.newLine && isResNameShowed) {
+  if (!contentOnly && globalThis.config.newLine && isResNameShowed) {
     domStr += '<br />';
-  } else if (globalThis.config.aamode.enable && isAA) {
+  } else if (!contentOnly && globalThis.config.aamode.enable && isAA) {
     // AAモードがオンで対象がAAなら強制的に改行する
     domStr += '<br />';
   }
@@ -1398,7 +1400,7 @@ export const createDom = (message: UserComment, type: 'chat' | 'server', isAA?: 
   }
 
   // サムネイル表示
-  const isThumbnailShow = (globalThis.config.thumbnail == 1 && type === 'chat') || globalThis.config.thumbnail == 2;
+  const isThumbnailShow = !contentOnly && ((globalThis.config.thumbnail == 1 && type === 'chat') || globalThis.config.thumbnail == 2);
   if (isThumbnailShow) {
     const imgreg = new RegExp("(h?ttps?(://[-_.!~*'()a-zA-Z0-9;/?:@&=+$,%#]+)(.jpeg|.jpg|.png|.gif|.webp))", 'g');
     const imgUrls: string[] = [];
@@ -1466,6 +1468,7 @@ export const sendDom = async (messageList: UserComment[]) => {
 
     // レンダラーのコメント一覧にも表示 (透明NGの除外は sendDomForChatWindow 内で行う)
     sendDomForChatWindow(newList);
+    const desktopSubtitleId = sendDomForDesktopSubtitle(newList);
 
     // 読み上げ・SE は NG でない最後のコメントを対象にする (全件 NG なら無音)
     const nonNgList = newList.filter((m) => !m.isNg);
@@ -1545,7 +1548,7 @@ export const sendDom = async (messageList: UserComment[]) => {
     }
 
     // 鳴らし終わって読み子が終わった
-    resetInitMessage();
+    resetInitMessage(desktopSubtitleId);
   } catch (e) {
     log.error(e);
   }
@@ -1582,7 +1585,32 @@ const sendDomForChatWindow = (messageList: UserComment[]) => {
   globalThis.electron.chatWindow.webContents.send(electronEvent.SHOW_COMMENT, { config: globalThis.config, dom: domStr2 });
 };
 
-const resetInitMessage = () => {
+let desktopSubtitleSequence = 0;
+
+/** 字幕には最新の可視コメント本文だけを表示し、表示期限は OBS の表示モードと同期する。 */
+const sendDomForDesktopSubtitle = (messageList: UserComment[]): number | null => {
+  const message = messageList.filter((item) => !(item.isNg && item.ngDisplayType === 'transparent')).at(-1);
+  if (!message) return null;
+  const id = ++desktopSubtitleSequence;
+  const payload = {
+    id,
+    dom: createDom(message, 'chat', message.isAA, true),
+    durationMs: Math.max(0, Number(globalThis.config.minDisplayTime) * 1000 || 0),
+    dispType: globalThis.config.dispType,
+  };
+  globalThis.electron.desktopSubtitlePayload = payload;
+  globalThis.electron.subtitleWindow?.webContents.send(electronEvent.SHOW_COMMENT, payload);
+  return id;
+};
+
+const clearDesktopSubtitle = (displayId?: number) => {
+  if (typeof displayId !== 'number' || globalThis.electron.desktopSubtitlePayload?.id === displayId) {
+    globalThis.electron.desktopSubtitlePayload = null;
+  }
+  globalThis.electron.subtitleWindow?.webContents.send(electronEvent.CLEAR_DESKTOP_SUBTITLE, displayId);
+};
+
+const resetInitMessage = (displayId?: number | null) => {
   if (globalThis.config.dispType === 1) {
     const resetObj: CommentSocketMessage = {
       type: 'reset',
@@ -1591,6 +1619,7 @@ const resetInitMessage = () => {
     displayClients.forEach((client) => {
       client.send(JSON.stringify(resetObj));
     });
+    if (displayId !== null) clearDesktopSubtitle(displayId);
   }
 };
 
