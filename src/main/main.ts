@@ -1,6 +1,6 @@
 // Electronのモジュール
 import path from 'path';
-import electron, { Tray, Menu, dialog, ipcMain } from 'electron';
+import electron, { Tray, Menu, dialog, ipcMain, screen } from 'electron';
 import * as remote from '@electron/remote/main';
 import log from 'electron-log';
 import { sleep } from './util';
@@ -12,7 +12,7 @@ import { initThreadBrowser } from './threadBrowser';
 import { registerClipboardHandlers } from './clipboard';
 import { registerChatWindowCssHandlers } from './chatWindowCss';
 import { registerSpeechControlHandlers } from './speechControl';
-import { applyChatWindowRuntimeMode, chatWindowCreateOptions, loadChatWindowMode, registerChatWindowModeHandlers } from './chatWindowMode';
+import { applyChatWindowRuntimeMode, chatWindowCreateOptions, getChatWindowMode, loadChatWindowMode, registerChatWindowModeHandlers } from './chatWindowMode';
 import SherpaSpeechToText from './sherpaStt';
 import { electronEvent } from './const';
 remote.initialize();
@@ -22,7 +22,7 @@ remote.initialize();
  *  - electron-vite dev 中: process.env.ELECTRON_RENDERER_URL に dev サーバの URL が入る
  *  - production: dist/main/index.js から見た dist/renderer/src/html/<name>.html を file:// で読む
  */
-const resolveRendererUrl = (htmlName: 'index' | 'chat' | 'translate' | 'imagePreview' | 'threadBrowser') => {
+const resolveRendererUrl = (htmlName: 'index' | 'chat' | 'desktopSubtitle' | 'translate' | 'imagePreview' | 'threadBrowser') => {
   const devUrl = process.env.ELECTRON_RENDERER_URL;
   if (devUrl) {
     return `${devUrl}/src/html/${htmlName}.html`;
@@ -72,6 +72,8 @@ if (!app.requestSingleInstanceLock()) {
   globalThis.electron = {
     mainWindow: null as any,
     chatWindow: null as any,
+    subtitleWindow: null as any,
+    desktopSubtitlePayload: null,
     translateWindow: null as any,
     imagePreviewWindow: null as any,
     iconList: null as any,
@@ -259,13 +261,43 @@ if (!app.requestSingleInstanceLock()) {
     });
 
     createChatWindow();
+    createDesktopSubtitleWindow();
     createTranslateWindow();
     createImagePreviewWindow();
     initThreadBrowser(() => resolveRendererUrl('threadBrowser'));
     registerClipboardHandlers();
     registerChatWindowCssHandlers();
     registerSpeechControlHandlers();
-    registerChatWindowModeHandlers(recreateChatWindow);
+    registerChatWindowModeHandlers(syncDesktopSubtitleHandleMode);
+    startDesktopSubtitlePointerMonitoring();
+    ipcMain.on(electronEvent.START_DESKTOP_SUBTITLE_RESIZE, (event, edge: string) => {
+      const subtitleWindow = globalThis.electron.subtitleWindow;
+      if (!subtitleWindow || subtitleWindow.isDestroyed() || event.sender !== subtitleWindow.webContents) return;
+      const [x, y] = subtitleWindow.getPosition();
+      const [width, height] = subtitleWindow.getSize();
+      const cursor = screen.getCursorScreenPoint();
+      desktopSubtitleResize = { edge, startX: cursor.x, startY: cursor.y, x, y, width, height };
+      setDesktopSubtitleMouseIgnored(false);
+    });
+    ipcMain.on(electronEvent.END_DESKTOP_SUBTITLE_RESIZE, (event) => {
+      const subtitleWindow = globalThis.electron.subtitleWindow;
+      if (event.sender !== subtitleWindow?.webContents) return;
+      desktopSubtitleResize = null;
+      setDesktopSubtitleMouseIgnored(true);
+    });
+    ipcMain.on(electronEvent.CLEAR_DESKTOP_SUBTITLE, (event, displayId?: number) => {
+      if (event.sender !== globalThis.electron.subtitleWindow?.webContents) return;
+      if (typeof displayId === 'number' && globalThis.electron.desktopSubtitlePayload?.id !== displayId) return;
+      globalThis.electron.desktopSubtitlePayload = null;
+    });
+    ipcMain.on(electronEvent.SHOW_CHAT_WINDOW, () => {
+      const chatWindow = globalThis.electron.chatWindow;
+      if (!chatWindow || chatWindow.isDestroyed()) return;
+      if (!chatWindow.isVisible()) chatWindow.show();
+      chatWindow.focus();
+    });
+    ipcMain.on(electronEvent.SHOW_DESKTOP_SUBTITLE, () => showDesktopSubtitleWindow());
+    ipcMain.on(electronEvent.HIDE_DESKTOP_SUBTITLE, () => hideDesktopSubtitleWindow());
     initializeSherpaStt(globalThis.electron.sherpaStt);
 
     applyTaskbarState();
@@ -274,9 +306,6 @@ if (!app.requestSingleInstanceLock()) {
   // 音声再生できるようにする
   app.commandLine.appendSwitch('--autoplay-policy', 'no-user-gesture-required');
 }
-
-/** チャットウィンドウの位置・大きさの保存 (作り直し時に、作り直す前の状態を保存するため保持する) */
-let chatWindowState: ReturnType<typeof windowStateKeeper> | null = null;
 
 const createChatWindow = () => {
   const windowState = windowStateKeeper({
@@ -294,8 +323,8 @@ const createChatWindow = () => {
 
     useContentSize: true,
     icon: iconPath,
-    // 枠・背景透過・下地色 (表示モードによる。作成時にしか指定できない)
-    ...chatWindowCreateOptions(),
+    // 通常のコメント一覧は、字幕の表示モードから独立した通常ウィンドウにする。
+    backgroundColor: '#1e1e1e',
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -307,10 +336,6 @@ const createChatWindow = () => {
   });
   remote.enable(chatWindow.webContents);
   windowState.manage(chatWindow);
-  chatWindowState = windowState;
-  // 最前面・クリック透過
-  applyChatWindowRuntimeMode(chatWindow);
-
   chatWindow.setTitle('unacast');
   chatWindow.setMenu(null);
 
@@ -321,28 +346,197 @@ const createChatWindow = () => {
   // chatWindow.webContents.openDevTools();
 };
 
-/**
- * チャットウィンドウを作り直す (枠なし/背景透過の切り替え用)。
- * 表示中のコメントは作り直す前に取り出し、新しいウィンドウの読み込み後に戻す。位置・大きさは保存して引き継ぐ。
- */
-const recreateChatWindow = async () => {
-  const old = globalThis.electron.chatWindow;
-  let commentsHtml = '';
-  if (old && !old.isDestroyed()) {
-    try {
-      commentsHtml = await old.webContents.executeJavaScript(`document.getElementById('res-list')?.innerHTML ?? ''`);
-    } catch (e) {
-      log.warn('[recreateChatWindow] コメントの退避に失敗', e);
-    }
-    chatWindowState?.saveState(old);
-    old.destroy();
-  }
-  createChatWindow();
-  const chatWindow = globalThis.electron.chatWindow;
-  chatWindow.setSkipTaskbar(!globalThis.window_config.taskbar.chatWindow);
-  chatWindow.webContents.once('did-finish-load', () => {
-    chatWindow.webContents.send(electronEvent.RESTORE_CHAT_COMMENTS, commentsHtml);
+let desktopSubtitleHandleWindow: electron.BrowserWindow | null = null;
+let syncingDesktopSubtitleHandle = false;
+let desktopSubtitleResize: { edge: string; startX: number; startY: number; x: number; y: number; width: number; height: number } | null = null;
+let desktopSubtitleMouseIgnored = true;
+const DESKTOP_SUBTITLE_HANDLE_WIDTH = 44;
+const DESKTOP_SUBTITLE_HANDLE_HEIGHT = 11;
+const DESKTOP_SUBTITLE_HANDLE_WINDOW_WIDTH = 46;
+const DESKTOP_SUBTITLE_HANDLE_WINDOW_HEIGHT = 32;
+
+const setDesktopSubtitleMouseIgnored = (ignore: boolean) => {
+  const subtitleWindow = globalThis.electron.subtitleWindow;
+  if (!subtitleWindow || subtitleWindow.isDestroyed() || desktopSubtitleMouseIgnored === ignore) return;
+  subtitleWindow.setIgnoreMouseEvents(ignore);
+  desktopSubtitleMouseIgnored = ignore;
+};
+
+const createDesktopSubtitleWindow = () => {
+  const windowState = windowStateKeeper({
+    defaultWidth: 800,
+    defaultHeight: 150,
+    file: 'desktopSubtitleWindow.json',
   });
+  const iconPath = path.resolve(__dirname, '../../icon.png');
+  const subtitleWindow = new electron.BrowserWindow({
+    x: windowState.x,
+    y: windowState.y,
+    width: windowState.width,
+    height: windowState.height,
+    useContentSize: true,
+    icon: iconPath,
+    ...chatWindowCreateOptions(),
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+    },
+    skipTaskbar: true,
+    closable: false,
+    resizable: false,
+    hasShadow: false,
+  });
+  remote.enable(subtitleWindow.webContents);
+  windowState.manage(subtitleWindow);
+  applyChatWindowRuntimeMode(subtitleWindow);
+  subtitleWindow.setIgnoreMouseEvents(true);
+  desktopSubtitleMouseIgnored = true;
+  subtitleWindow.setTitle('unacast');
+  subtitleWindow.setMenu(null);
+  subtitleWindow.loadURL(resolveRendererUrl('desktopSubtitle'));
+  subtitleWindow.on('move', alignDesktopSubtitleHandle);
+  subtitleWindow.on('closed', () => {
+    if (globalThis.electron.subtitleWindow === subtitleWindow) globalThis.electron.subtitleWindow = null as any;
+  });
+  globalThis.electron.subtitleWindow = subtitleWindow;
+  subtitleWindow.webContents.once('did-finish-load', () => {
+    if (globalThis.electron.desktopSubtitlePayload) subtitleWindow.webContents.send(electronEvent.SHOW_COMMENT, globalThis.electron.desktopSubtitlePayload);
+  });
+};
+
+const alignDesktopSubtitleHandle = () => {
+  const subtitleWindow = globalThis.electron.subtitleWindow;
+  const handle = desktopSubtitleHandleWindow;
+  if (!subtitleWindow || subtitleWindow.isDestroyed() || !handle || handle.isDestroyed()) return;
+  const [x, y] = subtitleWindow.getPosition();
+  syncingDesktopSubtitleHandle = true;
+  handle.setPosition(x, y - DESKTOP_SUBTITLE_HANDLE_WINDOW_HEIGHT, false);
+  syncingDesktopSubtitleHandle = false;
+};
+
+const ensureDesktopSubtitleHandle = () => {
+  if (desktopSubtitleHandleWindow && !desktopSubtitleHandleWindow.isDestroyed()) return desktopSubtitleHandleWindow;
+  const handle = new electron.BrowserWindow({
+    width: DESKTOP_SUBTITLE_HANDLE_WINDOW_WIDTH,
+    height: DESKTOP_SUBTITLE_HANDLE_WINDOW_HEIGHT,
+    useContentSize: true,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    closable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    alwaysOnTop: true,
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+  handle.setTitle('unacast');
+  handle.setMenu(null);
+  handle.setAlwaysOnTop(true);
+  handle.setBackgroundColor('#00000000');
+  handle.loadURL(
+    'data:text/html;charset=utf-8,' +
+      encodeURIComponent(
+        '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent}body{display:flex;align-items:center;justify-content:center}#handle-label{box-sizing:border-box;width:44px;height:11px;padding:0 2px;background:#6060c0;color:#fff;font:400 10px/11px "Segoe UI",sans-serif;letter-spacing:.3px;text-align:center;white-space:nowrap;user-select:none;-webkit-app-region:drag}</style></head><body><div id="handle-label">unacast</div></body></html>',
+      ),
+  );
+  handle.on('move', () => {
+    if (syncingDesktopSubtitleHandle) return;
+    const subtitleWindow = globalThis.electron.subtitleWindow;
+    if (!subtitleWindow || subtitleWindow.isDestroyed()) return;
+    const [x, y] = handle.getPosition();
+    subtitleWindow.setPosition(x, y + DESKTOP_SUBTITLE_HANDLE_WINDOW_HEIGHT, false);
+  });
+  handle.on('closed', () => {
+    if (desktopSubtitleHandleWindow === handle) desktopSubtitleHandleWindow = null;
+  });
+  desktopSubtitleHandleWindow = handle;
+  return handle;
+};
+
+const syncDesktopSubtitleHandleMode = () => {
+  const mode = getChatWindowMode();
+  if (desktopSubtitleHandleWindow && !desktopSubtitleHandleWindow.isDestroyed()) {
+    desktopSubtitleHandleWindow.setAlwaysOnTop(mode.alwaysOnTop);
+    if (globalThis.electron.subtitleWindow?.isVisible()) desktopSubtitleHandleWindow.showInactive();
+  }
+  if (mode.frameless) {
+    desktopSubtitleResize = null;
+    setDesktopSubtitleMouseIgnored(true);
+  }
+};
+
+const showDesktopSubtitleWindow = () => {
+  const subtitleWindow = globalThis.electron.subtitleWindow;
+  if (!subtitleWindow || subtitleWindow.isDestroyed()) return;
+  const mode = getChatWindowMode();
+  subtitleWindow.setAlwaysOnTop(mode.alwaysOnTop);
+  setDesktopSubtitleMouseIgnored(true);
+  const [x, y] = subtitleWindow.getPosition();
+  if (y < DESKTOP_SUBTITLE_HANDLE_WINDOW_HEIGHT) subtitleWindow.setPosition(x, DESKTOP_SUBTITLE_HANDLE_WINDOW_HEIGHT, false);
+  const handle = ensureDesktopSubtitleHandle();
+  alignDesktopSubtitleHandle();
+  handle.setAlwaysOnTop(mode.alwaysOnTop);
+  subtitleWindow.showInactive();
+  handle.showInactive();
+};
+
+const hideDesktopSubtitleWindow = () => {
+  desktopSubtitleResize = null;
+  setDesktopSubtitleMouseIgnored(true);
+  const subtitleWindow = globalThis.electron.subtitleWindow;
+  if (subtitleWindow && !subtitleWindow.isDestroyed()) subtitleWindow.hide();
+  if (desktopSubtitleHandleWindow && !desktopSubtitleHandleWindow.isDestroyed()) desktopSubtitleHandleWindow.hide();
+};
+
+const startDesktopSubtitlePointerMonitoring = () => {
+  setInterval(() => {
+    const subtitleWindow = globalThis.electron.subtitleWindow;
+    if (!subtitleWindow || subtitleWindow.isDestroyed() || !subtitleWindow.isVisible()) return;
+
+    if (desktopSubtitleResize) {
+      const cursor = screen.getCursorScreenPoint();
+      const dx = cursor.x - desktopSubtitleResize.startX;
+      const dy = cursor.y - desktopSubtitleResize.startY;
+      const next = { x: desktopSubtitleResize.x, y: desktopSubtitleResize.y, width: desktopSubtitleResize.width, height: desktopSubtitleResize.height };
+      if (desktopSubtitleResize.edge.includes('left')) {
+        next.x = desktopSubtitleResize.x + dx;
+        next.width = desktopSubtitleResize.width - dx;
+      }
+      if (desktopSubtitleResize.edge.includes('right')) next.width = desktopSubtitleResize.width + dx;
+      if (desktopSubtitleResize.edge.includes('top')) {
+        next.y = desktopSubtitleResize.y + dy;
+        next.height = desktopSubtitleResize.height - dy;
+      }
+      if (desktopSubtitleResize.edge.includes('bottom')) next.height = desktopSubtitleResize.height + dy;
+      if (next.width < 200) {
+        if (desktopSubtitleResize.edge.includes('left')) next.x = desktopSubtitleResize.x + desktopSubtitleResize.width - 200;
+        next.width = 200;
+      }
+      if (next.height < 80) {
+        if (desktopSubtitleResize.edge.includes('top')) next.y = desktopSubtitleResize.y + desktopSubtitleResize.height - 80;
+        next.height = 80;
+      }
+      subtitleWindow.setBounds(next, false);
+      alignDesktopSubtitleHandle();
+      return;
+    }
+
+    // 字幕本文は常時クリック透過。枠を表示した場合だけ、枠端の数pxをリサイズ操作に使う。
+    const mode = getChatWindowMode();
+    if (mode.frameless) {
+      setDesktopSubtitleMouseIgnored(true);
+      return;
+    }
+    const [x, y] = subtitleWindow.getPosition();
+    const [width, height] = subtitleWindow.getSize();
+    const cursor = screen.getCursorScreenPoint();
+    const within = cursor.x >= x && cursor.x <= x + width && cursor.y >= y && cursor.y <= y + height;
+    const edge = within && (cursor.x - x <= 8 || x + width - cursor.x <= 8 || cursor.y - y <= 8 || y + height - cursor.y <= 8);
+    setDesktopSubtitleMouseIgnored(!edge);
+  }, 16);
 };
 
 const createTranslateWindow = () => {

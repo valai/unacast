@@ -37,6 +37,7 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, 'src/html/index.html'),
           chat: resolve(__dirname, 'src/html/chat.html'),
+          desktopSubtitle: resolve(__dirname, 'src/html/desktopSubtitle.html'),
           translate: resolve(__dirname, 'src/html/translate.html'),
           imagePreview: resolve(__dirname, 'src/html/imagePreview.html'),
           threadBrowser: resolve(__dirname, 'src/html/threadBrowser.html'),

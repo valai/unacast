@@ -1,15 +1,15 @@
 import * as React from 'react';
 import { Box, Button, Checkbox, FormControlLabel, MenuItem, TextField, Typography } from '@mui/material';
 import { useAppStore } from '../store';
-import { invokeGetChatWindowMode, invokeSetChatWindowMode, sendChatWindowCss, subscribeChatWindowMode } from '../ipc';
+import { invokeGetChatWindowMode, invokeSetChatWindowMode, sendChatWindowCss, sendShowChatWindow, sendShowDesktopSubtitle, sendHideDesktopSubtitle, subscribeChatWindowMode } from '../ipc';
 import type { ChatWindowMode } from '../../../main/chatWindowMode';
 import { CSS_PROPERTIES, CSS_TARGETS, buildCssValue, buildPreviewDocument, upsertCssDeclaration } from '../chatWindowCss';
 import { SectionPanel, Caption, HelpPopover } from './common';
 
 /**
- * ウィンドウの表示モード (最前面・枠なし/背景透過・クリック透過)。
+ * 字幕ウィンドウの表示モード。背景透過とクリック透過は常時有効。
  * config ではなく main が持つウィンドウ設定なので、「適用」を待たずにすぐ切り替える。
- * チャットウィンドウの右クリックメニューからの変更も購読して表示を合わせる。
+ * 設定画面の変更を購読して表示を合わせる。
  */
 const ChatWindowModeControls: React.FC = () => {
   const [mode, setMode] = React.useState<ChatWindowMode | null>(null);
@@ -40,15 +40,8 @@ const ChatWindowModeControls: React.FC = () => {
           ウィンドウの表示
         </Typography>
         <HelpPopover>
-          <Box>ゲーム画面などの上に重ねてコメントを見る時に使います。チャットウィンドウの右クリックメニューからも切り替えられます。</Box>
-          <Box sx={{ mt: 1 }}>
-            枠なし・背景透過: タイトルバーを消し、背景を半透明にします。移動はウィンドウ上端のつまみ (マウスを乗せると表示) をドラッグします。背景の濃さは下の CSS の body の
-            background-color で変えられます。
-          </Box>
-          <Box sx={{ mt: 1 }}>
-            クリック透過:
-            マウス操作が後ろのウィンドウに届くようになります。有効中はチャットウィンドウを操作できないため、解除はこの画面から行ってください。アプリを再起動しても解除されます。
-          </Box>
+          <Box>ゲーム画面などの上に重ねてデスクトップ字幕を見る時に使います。通常のチャットボックスには影響しません。</Box>
+          <Box sx={{ mt: 1 }}>背景と字幕本文は常に透過・クリック透過です。青い「unacast」ハンドルはいつでもドラッグできます。「枠を表示」を有効にすると、枠の端をドラッグして字幕ウィンドウのサイズを変更できます。</Box>
         </HelpPopover>
       </Box>
       <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 2 }}>
@@ -57,12 +50,8 @@ const ChatWindowModeControls: React.FC = () => {
           label="最前面に表示"
         />
         <FormControlLabel
-          control={<Checkbox size="small" checked={mode?.frameless ?? false} disabled={disabled} onChange={(e) => update({ frameless: e.target.checked })} />}
-          label="枠なし・背景透過"
-        />
-        <FormControlLabel
-          control={<Checkbox size="small" checked={mode?.clickThrough ?? false} disabled={disabled} onChange={(e) => update({ clickThrough: e.target.checked })} />}
-          label="クリック透過"
+          control={<Checkbox size="small" checked={!mode?.frameless} disabled={disabled} onChange={(e) => update({ frameless: !e.target.checked })} />}
+          label="枠を表示"
         />
       </Box>
     </Box>
@@ -175,25 +164,42 @@ export const ChatWindowStyle: React.FC = () => {
     sendChatWindowCss(css);
   };
 
+  const handleShowSubtitle = () => {
+    void invokeSetChatWindowMode({ alwaysOnTop: true, frameless: true }).then(() => {
+      sendShowDesktopSubtitle();
+    });
+  };
+
   return (
     <SectionPanel
-      title="チャットウィンドウのスタイル"
+      title="デスクトップ字幕"
       help={
         <>
-          <Box>手元で確認するチャットウィンドウの見た目 (文字サイズ・色・背景など) を CSS で変更します。配信画面 (OBS) には影響しません。</Box>
+          <Box>JPNKN Fastを含め、unacastが受信したコメントをデスクトップ字幕ウィンドウに表示します。通常のコメント表示と同じタイミングで反映され、配信画面 (OBS) には影響しません。</Box>
+          <Box sx={{ mt: 1 }}>「字幕を表示」を押すと、最前面・背景透過・クリック透過で開きます。左上の青い「unacast」ハンドルをドラッグして位置を調整できます。通常のコメント一覧は「チャットボックスを表示」から別に開けます。</Box>
           <Box sx={{ mt: 1 }}>
-            「ウィンドウの表示」の最前面・枠なし/背景透過・クリック透過は、チェックするとすぐ切り替わります
-            (「適用」は不要)。枠なし/背景透過を切り替えると、チャットウィンドウを作り直します (表示中のコメントは引き継ぎます)。
+            「ウィンドウの表示」の最前面・枠表示は、チェックするとすぐ切り替わります (「適用」は不要)。背景透過とクリック透過は常に有効です。
           </Box>
           <Box sx={{ mt: 1 }}>
             「項目を選んで挿入」で対象と項目を選ぶと、下の CSS に書き込まれます。同じ対象のブロックがあれば、その中の値を置き換えます。CSS を直接書いても構いません。
           </Box>
-          <Box sx={{ mt: 1 }}>編集中の内容は右のプレビューにすぐ反映されます。「適用」を押すと保存され、チャットウィンドウに反映されます。</Box>
+          <Box sx={{ mt: 1 }}>編集中の内容は右のプレビューにすぐ反映されます。「適用」を押すと保存され、字幕ウィンドウに反映されます。</Box>
           <Box sx={{ mt: 1 }}>resources フォルダの style-server.css を使っている場合は、それより後に読み込まれるため、こちらの設定が優先されます。</Box>
         </>
       }
     >
-      <Caption>手元のチャットウィンドウの見た目を変更します。配信画面 (OBS) には影響しません。</Caption>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+        <Caption>デスクトップ上にコメントを表示します。配信画面 (OBS) には影響しません。</Caption>
+        <Button variant="outlined" size="small" onClick={handleShowSubtitle}>
+          字幕を表示
+        </Button>
+        <Button variant="outlined" size="small" onClick={sendHideDesktopSubtitle}>
+          字幕を消す
+        </Button>
+        <Button variant="outlined" size="small" onClick={sendShowChatWindow}>
+          チャットボックスを表示
+        </Button>
+      </Box>
       <ChatWindowModeControls />
       <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
         スタイル (CSS)

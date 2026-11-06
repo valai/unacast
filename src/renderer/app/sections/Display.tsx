@@ -102,7 +102,7 @@ export const Display: React.FC = () => {
 
       <Box sx={{ mt: 1, maxWidth: 600 }}>
         <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
-          レス表示秒数(SpeechCast風のみ)
+          レス表示秒数 (SpeechCast風・デスクトップ字幕)
         </Typography>
         <TextField
           size="small"
