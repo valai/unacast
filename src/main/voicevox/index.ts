@@ -31,7 +31,7 @@ type VoiceVoxSpeaker = {
 };
 
 /** 接続方式。UI 表示用 */
-export type VoiceVoxMode = 'none' | 'dll-0.15' | 'dll-0.16' | 'http';
+export type VoiceVoxMode = 'none' | 'dll-0.15' | 'dll-0.16' | 'dll-0.17' | 'http';
 
 interface IVoiceVoxCore {
   /**
@@ -249,11 +249,23 @@ const getStructs016 = () => {
   return structs016;
 };
 
+/** 0.17 用: voicevox_synthesizer_load_voice_model の追加オプション */
+let loadVoiceModelOptions017: any = null;
+const getLoadVoiceModelOptions017 = () => {
+  if (!loadVoiceModelOptions017) {
+    loadVoiceModelOptions017 = koffi.struct('VoicevoxLoadVoiceModelOptions', {
+      on_existing: 'int32',
+    });
+  }
+  return loadVoiceModelOptions017;
+};
+
 /** 0.16 用: voicevox_json_free で解放する JSON 文字列型 (名前付きなので一度だけ登録する) */
 let jsonType016: any = null;
 
 class VoiceVoxCore_0_16 implements IVoiceVoxCore {
-  constructor(libpath: string, lib: LibraryHandle) {
+  constructor(libpath: string, lib: LibraryHandle, core017OrNewer = false) {
+    this.mode = core017OrNewer ? 'dll-0.17' : 'dll-0.16';
     try {
       const { VoicevoxLoadOnnxruntimeOptions, VoicevoxInitializeOptionsV16, VoicevoxSynthesisOptionsV16 } = getStructs016();
       if (!jsonType016) {
@@ -261,7 +273,7 @@ class VoiceVoxCore_0_16 implements IVoiceVoxCore {
         jsonType016 = koffi.disposable('voicevox_json_type', 'string', voicevox_json_free);
       }
 
-      const api = {
+      const api: Record<string, any> = {
         voicevox_make_default_load_onnxruntime_options: lib.func('voicevox_make_default_load_onnxruntime_options', VoicevoxLoadOnnxruntimeOptions, []),
         voicevox_onnxruntime_load_once: lib.func('voicevox_onnxruntime_load_once', 'int', [VoicevoxLoadOnnxruntimeOptions, koffi.out('void**')]),
         voicevox_open_jtalk_rc_new: lib.func('voicevox_open_jtalk_rc_new', 'int', ['string', koffi.out('void**')]),
@@ -269,7 +281,6 @@ class VoiceVoxCore_0_16 implements IVoiceVoxCore {
         voicevox_voice_model_file_open: lib.func('voicevox_voice_model_file_open', 'int', ['string', koffi.out('void**')]),
         voicevox_voice_model_file_create_metas_json: lib.func('voicevox_voice_model_file_create_metas_json', jsonType016, ['void*']),
         voicevox_voice_model_file_delete: lib.func('voicevox_voice_model_file_delete', 'void', ['void*']),
-        voicevox_synthesizer_load_voice_model: lib.func('voicevox_synthesizer_load_voice_model', 'int', ['void*', 'void*']),
         voicevox_synthesizer_create_audio_query: lib.func('voicevox_synthesizer_create_audio_query', 'int', ['void*', 'string', 'uint32', koffi.out(koffi.pointer(jsonType016))]),
         voicevox_synthesizer_synthesis: lib.func('voicevox_synthesizer_synthesis', 'int', [
           'void*',
@@ -281,6 +292,13 @@ class VoiceVoxCore_0_16 implements IVoiceVoxCore {
         ]),
         voicevox_wav_free: lib.func('voicevox_wav_free', 'void', ['uint8*']),
       };
+      if (core017OrNewer) {
+        const VoicevoxLoadVoiceModelOptions = getLoadVoiceModelOptions017();
+        api.voicevox_make_default_load_voice_model_options = lib.func('voicevox_make_default_load_voice_model_options', VoicevoxLoadVoiceModelOptions, []);
+        api.voicevox_synthesizer_load_voice_model = lib.func('voicevox_synthesizer_load_voice_model', 'int', ['void*', 'void*', VoicevoxLoadVoiceModelOptions]);
+      } else {
+        api.voicevox_synthesizer_load_voice_model = lib.func('voicevox_synthesizer_load_voice_model', 'int', ['void*', 'void*']);
+      }
       this.api = api;
 
       // onnxruntime の読み込み (ファイル名は core が返す既定値。SetDllDirectoryW 済みなので DLL と同じディレクトリから解決される)
@@ -403,7 +421,9 @@ class VoiceVoxCore_0_16 implements IVoiceVoxCore {
         log.error(`[voicevox] vvm を開けませんでした: ${vvmPath}`);
         return null;
       }
-      const loadResult = this.api.voicevox_synthesizer_load_voice_model(this.synthesizer, model[0]);
+      const loadResult = this.api.voicevox_make_default_load_voice_model_options
+        ? this.api.voicevox_synthesizer_load_voice_model(this.synthesizer, model[0], this.api.voicevox_make_default_load_voice_model_options())
+        : this.api.voicevox_synthesizer_load_voice_model(this.synthesizer, model[0]);
       this.api.voicevox_voice_model_file_delete(model[0]);
       if (loadResult !== 0) {
         log.error(`[voicevox] 音声モデルのロードに失敗 (code=${loadResult} vvm=${vvmPath})`);
@@ -566,8 +586,9 @@ class VoiceVoxClient {
       if (major === 0 && minor <= 15) {
         this.voicevox_core = new VoiceVoxCore_0_15(voicevox_path, voicevox_core);
       } else {
-        // VOICEVOX Core の 0.16 以降(VOICEVOXの0.16以降ではない)は API が別物
-        this.voicevox_core = new VoiceVoxCore_0_16(voicevox_path, voicevox_core);
+        // Core 0.17 では load_voice_model の C API にオプション引数が追加された。
+        // VOICEVOX ENGINE 0.26 系が Core 0.17 を同梱するため、バージョンに応じた ABI を使う。
+        this.voicevox_core = new VoiceVoxCore_0_16(voicevox_path, voicevox_core, major > 0 || minor >= 17);
       }
       if (this.voicevox_core.available) {
         this.path = voicevox_path;
@@ -614,7 +635,7 @@ class VoiceVoxClient {
     return this.voicevox_core.available;
   }
   /**
-   * 接続方式 (dll-0.15 / dll-0.16 / http / none)。
+   * 接続方式 (dll-0.15 / dll-0.16 / dll-0.17 / http / none)。
    */
   public get mode(): VoiceVoxMode {
     return this.voicevox_core.mode;

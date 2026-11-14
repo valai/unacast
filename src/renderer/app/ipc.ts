@@ -19,8 +19,8 @@ type UpdateStatusPayload = {
 type VoicevoxConfigPayload = {
   path: string | undefined;
   available: boolean;
-  /** 接続方式 (dll-0.15 / dll-0.16 = DLL直接読み込み, http = エンジンAPI) */
-  mode: 'none' | 'dll-0.15' | 'dll-0.16' | 'http';
+  /** 接続方式 (dll-0.15 / dll-0.16 / dll-0.17 = DLL直接読み込み, http = エンジンAPI) */
+  mode: 'none' | 'dll-0.15' | 'dll-0.16' | 'dll-0.17' | 'http';
   speakers: { speaker: string; style: string }[];
   speakerAndStyle: string;
 };
@@ -29,6 +29,7 @@ const voicevoxModeLabel: Record<VoicevoxConfigPayload['mode'], string> = {
   none: '-',
   'dll-0.15': 'DLL (core 0.15)',
   'dll-0.16': 'DLL (core 0.16)',
+  'dll-0.17': 'DLL (core 0.17+)',
   http: 'エンジンAPI',
 };
 
